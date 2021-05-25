@@ -1,6 +1,8 @@
 from app.utils import get_component
 from bs4 import BeautifulSoup
 import requests
+import re
+import json
 
 class Product:
     def __init__(self, product_id, product_name = None, opinions = [], opinions_count = None, pros_count = None, cons_count = None, average_score = None):
@@ -14,68 +16,91 @@ class Product:
 
     def extract_opinions(self):
         page = 1
-        product_id = input("Enter product ID: ")
-
         while True:
-            print(page)
-            respons = requests.get(f"https://www.ceneo.pl/{product_id}/opinie-{page}", allow_redirects=False)
-            if respons.status_code==200:
+            respons = requests.get(f"https://www.ceneo.pl/{self.product_id}/opinie-{page}", allow_redirects=False)
+            if respons.status_code == 200:
                 page_dom = BeautifulSoup(respons.text, 'html.parser')
                 opinions = page_dom.select("div.js_product-review")
                 for opinion in opinions:
-                    
-
-                    all_opinions.append(single_opinion)
+                    self.opinions.append(Opinion().extract_components(opinion).transform_components())
                 page += 1
-            else: break
-    def __dict__(self):
-        pass
+            else:
+                break
+        return self
+
+    def to_dict(self):
+        return{
+            "product_id": self.product_id,
+            "product_name": self.product_name,
+            "opinions_count": self.opinions_count,
+            "pros_count": self.pros_count,
+            "cons_count": self.cons_count,
+            "average_score": self.average_score,
+            "opinions": [opinion.to_dict() for opinion in self.opinions]
+        }
 
     def __str__(self) -> str:
-        pass
+        return f"""product_id: {self.product_id}<br>
+        product_name: {self.product_name}<br>
+        opinions_count: {self.opinions_count}<br>
+        pros_count: {self.pros_count}<br>
+        cons_count: {self.cons_count}<br>
+        average_score: {self.average_score}<br>
+        opinions: <br><br>
+        """.join(str(opinion) for opinion in self.opinions)
 
     def __repr__(self) -> str:
-        pass
+        return f"Product(product_id = {self.product_id}, product_name = {self.product_name}, opinions_count = {self.opinions_count}, pros_count = {self.pros_count}, cons_count = {self.cons_count}, average_score = {self.average_score}, opinions: [" + ", ".join(opinion.__repr__() for opinion in self.opinions) + "])"
+
+    def export_to_json(self):
+        with open(f"app/products/{self.product_id}.json", "w", encoding="UTF-8") as jf:
+            json.dump(self.to_dict(), jf, ensure_ascii=False, indent=4)
+
+    def analyze(self):
+        self.opinions_count = self.opinions.shape[0]
+        self.pros_count = self.opinions.pros.map(bool).sum()
+        self.cons_count = self.opinions.cons.map(bool).sum()
+        self.average_score = self.opinions.stars.mean()
+        return self
 
 class Opinion:
     selectors = {
-    "author": ["span.user-post__author-name"],
-    "recommendation": ["span.user-post__author-recomendation > em"],
-    "stars": ["span.user-post__score-count"],
-    "content": ["div.user-post__text"],
-    "pros": ["div.review-feature__col:has(> div[class$=\"positives\"]) > div.review-feature__item", None, True],
-    "cons": ["div.review-feature__col:has(> div[class$=\"negatives\"]) > div.review-feature__item", None, True],
-    "verfied": ["div.review-pz"],
-    "post_date": ["span.user-post__published > time:nth-child(1)", "datetime"],
-    "purchase_date": ["span.user-post__published > time:nth-child(2)", "datetime"],
-    "usefulness": ["span[id^='votes-yes']"],
-    "uselessness": ["span[id^='votes-no']"]
+        "author": ["span.user-post__author-name"],
+        "recommendation": ["span.user-post__author-recomendation > em"],
+        "stars": ["span.user-post__score-count"],
+        "content": ["div.user-post__text"],
+        "pros": ["div.review-feature__col:has(> div[class$=\"positives\"]) > div.review-feature__item",None,True],
+        "cons": ["div.review-feature__col:has(> div[class$=\"negatives\"]) > div.review-feature__item",None,True],
+        "verfied": ["div.review-pz"],
+        "post_date": ["span.user-post__published > time:nth-child(1)", "datetime"],
+        "purchase_date": ["span.user-post__published > time:nth-child(2)", "datetime"],
+        "usefulness": ["span[id^='votes-yes']"],
+        "uselessness": ["span[id^='votes-no']"]
     }
 
-    def __init__(self, opinion_id = None, author = None, recommendation = None, stars = None, content = None, pros = None, cons = None, verified = None, post_date = None, purchase_date = None, usefulness = None, uselessness = None) -> None:
+    def __init__(self, opinion_id=None, author=None, recommendation=None, stars=None, content=None, pros=None, cons=None, verified=None, post_date=None, purchase_date=None, usefulness=None, uselessness=None) -> None:
         self.opinion_id = opinion_id
-        self.recommendation = recommendation
-        self.stars = stars
-        self.content = content
-        self.verified = verified
-        self.pros = pros
-        self.cons = cons
-        self.post_date = post_date
-        self.purchase_date = purchase_date
-        self.usefulness = usefulness
-        self.uselessness = uselessness
 
-    def extract_components(self):
-        single_opinion = {key:get_component(opinion,*value)
-                            for key, value in selectors.items()}
-            single_opinion["opinion_id"] = opinion["data-entry-id"]
-            
-            single_opinion["recommendation"] = True if single_opinion[
-                "recommendation"] == "Polecam" else False if single_opinion["recommendation"] == "Nie polecam" else None
-            single_opinion["stars"] = float(
-                single_opinion["stars"].split("/")[0].replace(",", "."))
-            single_opinion["content"] = re.sub(
-                "\\s", " ", single_opinion["content"])
-            single_opinion["verfied"] = bool(single_opinion["verfied"])
-            single_opinion["usefulness"] = int(single_opinion["usefulness"])
-            single_opinion["uselessness"] = int(single_opinion["uselessness"])
+    def extract_components(self, opinion):
+        for key, value in self.selectors.items():
+            setattr(self, key, get_component(opinion, *value))
+        self.opinion_id = opinion["data-entry-id"]
+        return self
+
+    def transform_components(self):
+        self.recommendation = True if self.recommendation == "Polecam" else False if self.recommendation == "Nie polecam" else None
+        self.stars = float(self.stars.split("/")[0].replace(",", "."))
+        self.content = re.sub("\\s", " ", self.content)
+        self.verified = bool(self.verified)
+        self.usefulness = int(self.usefulness)
+        self.uselessness = int(self.uselessness)
+        return self
+
+    def to_dict(self):
+        return {"opinion_id": self.opinion_id} | {key: getattr(self, key) for key in self.selectors.keys()}
+
+    def __str__(self) -> str:
+        return f"opinion_id: {self.opinion_id}<br>" + "<br>".join(f"{key}: {str(getattr(self, key))}" for key in self.selectors.keys())
+
+    def __repr__(self) -> str:
+        return f"Opinion(opinion_id) = {self.opinion_id}, " + ", ".join(f"{key} = {str(getattr(self,key))}" for key in self.selectors.keys()) + ")"
